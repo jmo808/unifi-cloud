@@ -1,0 +1,82 @@
+- name: Install Unifi Software and Configure
+  hosts: unifivm
+  become: yes
+  vars_files:
+    - properties.yml
+    - secrets.yml
+  tasks:
+    - name: Update all Packages
+      apt:
+        name: "*"
+        state: latest
+        force_apt_get: yes
+      become_user: root
+    - name: Add GPG keys for repos
+      apt_key:
+        keyserver: "{{ item.keyserver }}"
+        id: "{{ item.id }}"
+      loop:
+        - { keyserver: keyserver.ubuntu.com, id: 06E85760C0A52C50 }
+        - { keyserver: keyserver.ubuntu.com, id: 0C49F3730359A14518585931BC711F9BA15703C6 }
+    - name: Add repo for unifi and mongo
+      apt_repository:
+        repo: "{{ item.repo }}"
+      loop:
+        - { repo: "deb http://repo.mongodb.org/apt/ubuntu xenial/mongodb-org/3.4 multiverse" }
+        - { repo: "deb http://www.ubnt.com/downloads/unifi/debian unifi-5.6 ubiquiti" }
+    - name: Install Required Packages
+      apt:
+        name: "{{ item.pak }}"
+        state: latest
+      loop:
+        - { pak: software-properties-common }
+        - { pak: curl }
+        - { pak: dirmngr }
+        - { pak: openjdk-8-jre-headless }
+        - { pak: binutils }
+        - { pak: ca-certificates-java }
+        - { pak: java-common }
+        - { pak: jsvc }
+        - { pak: libcommons-daemon-java }
+        - { pak: haveged }
+        - { pak: mongodb-org }
+    - name: Install Unifi SDN Package
+      apt: 
+        deb: https://dl.ubnt.com/unifi/5.9.29/unifi_sysvinit_all.deb
+    - name: Get Connection String
+      uri:
+        url: https://cloud.mongodb.com/api/atlas/v1.0/groups/{{ mongoatlasgroupid }}/clusters/{{ mongodbclusterconfig['name']}}
+        method: GET
+        user: "{{ mongoatlasuser }}"
+        password: "{{ mongoatlasapikey }}"
+      register: clusterinfo
+    - name: Get String
+      set_fact:
+        fullstring: "{{ clusterinfo['json']['mongoURIWithOptions'].split('mongodb://')[1] }}"
+    - name: Get Server String
+      set_fact:
+        serverstring: "{{ fullstring.split('/?')[0] }}"
+    - name: Get Options String
+      set_fact:
+        optionsstring: "{{ fullstring.split('/?')[1] }}"
+    - name: Configure system.properties to connect to MongoDB Atlas
+      lineinfile:
+        dest: /usr/lib/unifi/data/system.properties
+        backup: yes
+        line: "{{ item.line }}"
+        owner: unifi
+        state: present
+        insertafter: EOF
+      loop:
+        - { line: "db.mongo.local=false" }
+        - { line: "db.mongo.uri=mongodb://{{ mongodbuserconfig['username']}}:{{ mongodbuserconfig['password'] }}@{{ serverstring }}/unifidb?{{ optionsstring }}" }
+        - { line: "statdb.mongo.uri=mongodb://{{ mongodbuserconfig['username']}}:{{ mongodbuserconfig['password'] }}@{{ serverstring }}/unifidb_stat?{{ optionsstring }}" }
+        - { line: "unifi.db.name=unifidb" }
+    - name: Restart Unifi SDN Service
+      service:
+        name: unifi
+        state: restarted
+    - name: Show Connection Information
+      debug:
+        msg: The controller URL is https://{{ hostvars['localhost']['output_ip_address'].state.ip_address }}:8443.
+          The VM username is vmadmin and the password is {{ password }}. You can SSH to it with the IP above.

@@ -1,0 +1,23 @@
+mongodbclusterconfig: 
+  {
+"name" : "Unifi",
+"providerSettings" : {
+ "providerName" : "TENANT",
+ "backingProviderName": "AZURE",
+ "regionName" : "US_EAST_2",
+ "instanceSizeName" : "M2"
+}
+  }
+mongodbuserconfig:
+  {
+      "databaseName": "admin",
+      "username": "unifi",
+      "roles":[{"databaseName":"admin", "roleName":"readWriteAnyDatabase"}],
+      "password": "{{ password }}"
+  }
+resourcegroup: unifi-controller
+unifivnet: unifi-vnet
+unifinsg: unifi-nsg
+unifipublicip: unifi-public-ip
+unifinic: unifi-nic
+unifivm: unifivm

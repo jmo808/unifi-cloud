@@ -1,0 +1,161 @@
+- name: Deploy Azure Infra
+  hosts: localhost
+  connection: local
+  vars_files:
+    - secrets.yml
+    - properties.yml
+  tasks:
+    - name: Create Resource Group
+      azure_rm_resourcegroup:
+        name: "{{ resourcegroup }}"
+        location: westus2
+    - name: Create virtual network
+      azure_rm_virtualnetwork:
+        resource_group: "{{ resourcegroup }}"
+        name: "{{ unifivnet }}"
+        address_prefixes: "192.168.200.0/24"
+    - name: Create Network Security Group
+      azure_rm_securitygroup:
+        resource_group: "{{ resourcegroup }}"
+        name: "{{ unifinsg }}"
+        rules:
+          - name: SSH
+            protocol: Tcp
+            destination_port_range: 22
+            access: Allow
+            priority: 1001
+            direction: Inbound
+          - name: HTTP8080
+            protocol: Tcp
+            destination_port_range: 8080
+            access: Allow
+            priority: 1002
+            direction: Inbound
+          - name: ControllerUI
+            protocol: Tcp
+            destination_port_range: 8443
+            access: Allow
+            priority: 1003
+            direction: Inbound
+          - name: RedirectHTTP
+            protocol: Tcp
+            destination_port_range: 8880
+            access: Allow
+            priority: 1004
+            direction: Inbound
+          - name: RedirectHTTPS
+            protocol: Tcp
+            destination_port_range: 8843
+            access: Allow
+            priority: 1005
+            direction: Inbound
+          - name: STUNPort
+            protocol: Udp
+            destination_port_range: 3478
+            access: Allow
+            priority: 1006
+            direction: Inbound
+          - name: SpeedTest
+            protocol: Tcp
+            destination_port_range: 6789
+            access: Allow
+            priority: 1007
+            direction: Inbound
+    - name: Add Unifi Subnet
+      azure_rm_subnet:
+        resource_group: "{{ resourcegroup }}"
+        name: unifi-subnet
+        address_prefix: "192.168.200.0/25"
+        virtual_network: "{{ unifivnet }}"
+        security_group: "{{ unifinsg }}"
+    - name: Add Gateway Subnet
+      azure_rm_subnet:
+        resource_group: "{{ resourcegroup }}"
+        name: gateway-subnet
+        virtual_network: "{{ unifivnet }}"
+        address_prefix: "192.168.200.224/27"
+    - name: Create Public IP
+      azure_rm_publicipaddress:
+        resource_group: "{{ resourcegroup }}"
+        allocation_method: Static
+        name: "{{ unifipublicip }}"
+        location: westus2
+      register: output_ip_address
+    - name: Create virtual network interface card
+      azure_rm_networkinterface:
+        location: westus2
+        resource_group: "{{ resourcegroup }}"
+        name: "{{ unifinic }}"
+        virtual_network:
+          name: "{{ unifivnet }}"
+          resource_group: "{{ resourcegroup }}"
+        subnet: unifi-subnet
+        create_with_security_group: False
+        ip_configurations:
+          - name: iface1
+            public_ip_address_name: "{{ unifipublicip }}"
+            primary: True
+    - name: Create VM
+      azure_rm_virtualmachine:
+        resource_group: "{{ resourcegroup }}"
+        location: westus2
+        name: "{{ unifivm }}"
+        vm_size: Standard_B1ms
+        managed_disk_type: "Standard_LRS"
+        admin_username: "vmadmin"
+        admin_password: "{{ vmpassword }}"
+        ssh_password_enabled: true
+        network_interfaces: "{{ unifinic }}"
+        image:
+          offer: UbuntuServer
+          publisher: Canonical
+          sku: '18.04-LTS'
+          version: latest
+    - name: Create MongoDB Atlas Cluster
+      uri:
+        url: https://cloud.mongodb.com/api/atlas/v1.0/groups/{{ mongoatlasgroupid }}/clusters/
+        method: POST
+        user: "{{ mongoatlasuser }}"
+        password: "{{ mongoatlasapikey }}"
+        body: "{{ mongodbclusterconfig }}"
+        body_format: json
+        header:
+          Content-Type: "application/json"
+        status_code: 201
+    - name: Wait for cluster to be created (around 10 minutes)
+      pause: 
+        minutes: 10
+    - name: Create MongoDB Cluster User
+      uri:
+        url: https://cloud.mongodb.com/api/atlas/v1.0/groups/{{ mongoatlasgroupid }}/databaseUsers
+        method: POST
+        user: "{{ mongoatlasuser }}"
+        password: "{{ mongoatlasapikey }}"
+        body: "{{ mongodbuserconfig }}"
+        body_format: json
+        header:
+          Content-Type: "application/json"
+        status_code: 201
+    - name: Whitelist Unifi Server IP
+      uri:
+        url: https://cloud.mongodb.com/api/atlas/v1.0/groups/{{ mongoatlasgroupid }}/whitelist
+        method: POST
+        user: "{{ mongoatlasuser }}"
+        password: "{{ mongoatlasapikey }}"
+        body: [{"ipAddress":"{{ output_ip_address.state.ip_address }}", "comment":"unifi server"}]
+        body_format: json
+        header:
+          Content-Type: "application/json"
+        status_code: 201
+    - name: Add Host
+      add_host:
+        name: unifivm
+        ansible_host: "{{ output_ip_address.state.ip_address }}"
+        ansible_user: vmadmin
+        ansible_ssh_pass: "{{ vmpassword }}"
+        ansible_become_pass: "{{ vmpassword }}"
+    - name: Write the host key to known hosts
+      shell: "ssh-keyscan -H {{ output_ip_address.state.ip_address }} >> ~/.ssh/known_hosts"
+
+
+    

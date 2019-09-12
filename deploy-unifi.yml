@@ -1,0 +1,13 @@
+- name: Deploy Unifi in Azure with MongoDB Atlas DB
+  hosts: localhost
+  tasks:
+    - name: Random Number
+      set_fact:
+        randgen: "{{ 60 | random }}"
+    - name: Random Password
+      set_fact:
+        password: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+- name: Deploy Infrastructure Resources
+  import_playbook: deploy-infra.yml
+- name: Install and Configure Unifi
+  import_playbook: unifi-install.yml
